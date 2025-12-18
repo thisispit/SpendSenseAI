@@ -109,7 +109,7 @@ export function Dashboard() {
     } catch (error) {
       console.error("Upload failed:", error);
       setUploadStatus("error");
-      setStatusMessage("Upload failed. Please try again.");
+      setStatusMessage(`Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsUploading(false);
       if (fileInputRef.current) {
@@ -119,31 +119,37 @@ export function Dashboard() {
   };
 
   return (
-    <div className="min-h-screen p-8 bg-gray-50">
-      <div className="max-w-7xl mx-auto space-y-8">
-        {/* Header */}
-        <div className="flex justify-between items-center bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900 tracking-tight">SpendSense AI</h1>
-            <p className="text-gray-600 mt-1 font-medium">Financial Insights Dashboard</p>
+    <div className="min-h-screen bg-slate-50 selection:bg-indigo-100 selection:text-indigo-700 font-sans">
+      {/* Sticky Glass Header */}
+      <header className="sticky top-0 z-50 glass-panel border-b border-white/20">
+        <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-slate-900 rounded-xl flex items-center justify-center shadow-lg shadow-slate-900/20">
+              <span className="text-white font-bold text-xl">S</span>
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-slate-900 tracking-tight">SpendSense AI</h1>
+              <p className="text-xs text-slate-500 font-medium">Financial Intelligence</p>
+            </div>
           </div>
+
           <div className="flex items-center gap-4">
-            {/* Status Messages */}
+            {/* Status Pill */}
             {uploadStatus !== "idle" && (
-              <span className={`flex items-center gap-2 text-sm font-medium animate-in fade-in slide-in-from-right-2 px-3 py-1 rounded-full ${uploadStatus === 'success' ? 'bg-green-100 text-green-700' :
-                  uploadStatus === 'warning' ? 'bg-yellow-100 text-yellow-700' :
-                    'bg-red-100 text-red-700'
+              <span className={`flex items-center gap-2 text-xs font-semibold px-3 py-1.5 rounded-full ring-1 ring-inset animate-in fade-in slide-in-from-top-2 ${uploadStatus === 'success' ? 'bg-emerald-50 text-emerald-700 ring-emerald-200' :
+                uploadStatus === 'warning' ? 'bg-amber-50 text-amber-700 ring-amber-200' :
+                  'bg-rose-50 text-rose-700 ring-rose-200'
                 }`}>
-                {uploadStatus === 'success' && <CheckCircle className="w-4 h-4" />}
-                {uploadStatus === 'warning' && <AlertCircle className="w-4 h-4" />}
-                {uploadStatus === 'error' && <AlertCircle className="w-4 h-4" />}
+                {uploadStatus === 'success' && <CheckCircle className="w-3.5 h-3.5" />}
+                {uploadStatus === 'warning' && <AlertCircle className="w-3.5 h-3.5" />}
+                {uploadStatus === 'error' && <AlertCircle className="w-3.5 h-3.5" />}
                 {statusMessage}
               </span>
             )}
 
             <button
               onClick={handleReset}
-              className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+              className="p-2.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-full transition-all duration-200"
               title="Reset Session"
             >
               <Trash2 className="w-5 h-5" />
@@ -159,7 +165,7 @@ export function Dashboard() {
             <button
               onClick={handleUploadClick}
               disabled={isUploading}
-              className="flex items-center gap-2 bg-gray-900 text-white px-5 py-2.5 rounded-xl hover:bg-gray-800 transition-all shadow-lg hover:shadow-xl active:scale-95 disabled:opacity-70 disabled:cursor-not-allowed"
+              className="btn-primary"
             >
               {isUploading ? (
                 <Loader2 className="w-4 h-4 animate-spin" />
@@ -170,19 +176,21 @@ export function Dashboard() {
             </button>
           </div>
         </div>
+      </header>
 
+      <main className="max-w-7xl mx-auto px-6 py-8 space-y-8">
         {transactions.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-2xl border border-dashed border-gray-300">
-            <div className="mx-auto w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mb-4">
-              <Upload className="w-8 h-8 text-gray-400" />
+          <div className="text-center py-32 glass-panel rounded-3xl border border-dashed border-slate-300">
+            <div className="mx-auto w-20 h-20 bg-slate-100 rounded-full flex items-center justify-center mb-6 shadow-inner">
+              <Upload className="w-10 h-10 text-slate-400" />
             </div>
-            <h3 className="text-xl font-semibold text-gray-900">No transactions yet</h3>
-            <p className="text-gray-500 mt-2 max-w-md mx-auto">Upload a bank statement (PDF or CSV) to see your financial insights instantly.</p>
+            <h3 className="text-2xl font-bold text-slate-900">Your Financial Journey Starts Here</h3>
+            <p className="text-slate-500 mt-3 max-w-lg mx-auto text-lg">Upload your bank statement (PDF or CSV) to instantly unlock insights about your spending habits.</p>
             <button
               onClick={handleUploadClick}
-              className="mt-6 text-blue-600 font-medium hover:underline"
+              className="mt-8 text-indigo-600 font-semibold hover:text-indigo-700 hover:underline transition-all"
             >
-              Upload now
+              Browse files
             </button>
           </div>
         ) : (
@@ -194,43 +202,71 @@ export function Dashboard() {
               <SummaryCard title="Net Balance" amount={totalIncome - totalExpense} type={totalIncome - totalExpense >= 0 ? "income" : "expense"} />
             </div>
 
-            {/* File Management Section */}
-            {files.length > 0 && (
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100">
-                <h3 className="text-lg font-semibold text-gray-800 mb-4 flex items-center gap-2">
-                  <FileText className="w-5 h-5 text-gray-500" /> Uploaded Sources
-                </h3>
-                <div className="flex flex-wrap gap-4">
-                  {files.map((file, idx) => (
-                    <div key={idx} className="flex items-center justify-between bg-gray-50 px-4 py-2 rounded-lg border border-gray-200 min-w-[200px]">
-                      <div>
-                        <p className="font-medium text-sm text-gray-800 truncate max-w-[150px]" title={file.name}>{file.name}</p>
-                        <p className="text-xs text-gray-500">{file.count} transactions</p>
-                      </div>
-                      <button
-                        onClick={() => handleDeleteFile(file.name)}
-                        className="ml-3 p-1 text-gray-400 hover:text-red-500 transition-colors"
-                        title="Delete file"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
             {/* Charts Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <CategoryChart transactions={transactions} />
-              <TrendChart transactions={transactions} />
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+              <div className="glass-card p-6 rounded-2xl">
+                <h3 className="text-lg font-bold text-slate-800 mb-6">Expense Distribution</h3>
+                <CategoryChart transactions={transactions} />
+              </div>
+              <div className="glass-card p-6 rounded-2xl">
+                <h3 className="text-lg font-bold text-slate-800 mb-6">Monthly Trends</h3>
+                <TrendChart transactions={transactions} />
+              </div>
             </div>
 
-            {/* Recent Transactions */}
-            <TransactionTable transactions={transactions} />
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+              {/* Left Column: Transaction Table (Takes up 2/3) */}
+              <div className="lg:col-span-2 space-y-6">
+                <div className="glass-card p-6 rounded-2xl">
+                  <div className="flex justify-between items-center mb-6">
+                    <h3 className="text-lg font-bold text-slate-800">Recent Transactions</h3>
+                    <button className="text-sm font-medium text-indigo-600 hover:text-indigo-700">View All</button>
+                  </div>
+                  <TransactionTable transactions={transactions} />
+                </div>
+              </div>
+
+              {/* Right Column: Files & Info (Takes up 1/3) */}
+              <div className="space-y-6">
+                {files.length > 0 && (
+                  <div className="glass-card p-6 rounded-2xl">
+                    <h3 className="text-md font-bold text-slate-800 mb-4 flex items-center gap-2">
+                      <FileText className="w-4 h-4 text-slate-500" /> Data Sources
+                    </h3>
+                    <div className="space-y-3">
+                      {files.map((file, idx) => (
+                        <div key={idx} className="group flex items-center justify-between p-3 rounded-xl bg-slate-50 border border-slate-100 hover:border-slate-200 transition-all">
+                          <div className="overflow-hidden">
+                            <p className="font-semibold text-sm text-slate-700 truncate" title={file.name}>{file.name}</p>
+                            <p className="text-xs text-slate-400 font-medium mt-0.5">{file.count} txns</p>
+                          </div>
+                          <button
+                            onClick={() => handleDeleteFile(file.name)}
+                            className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors opacity-0 group-hover:opacity-100"
+                            title="Delete file"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                <div className="bg-indigo-900 p-6 rounded-2xl text-white shadow-xl shadow-indigo-900/20">
+                  <h4 className="font-bold text-lg mb-2">AI Insights</h4>
+                  <p className="text-indigo-200 text-sm leading-relaxed">
+                    Your dining expenses have increased by 15% this month. Consider setting a budget for next week.
+                  </p>
+                  <div className="mt-4 pt-4 border-t border-indigo-800">
+                    <button className="text-xs font-semibold uppercase tracking-wider text-indigo-300 hover:text-white transition-colors">Generate Full Report &rarr;</button>
+                  </div>
+                </div>
+              </div>
+            </div>
           </>
         )}
-      </div>
+      </main>
     </div>
   );
 }

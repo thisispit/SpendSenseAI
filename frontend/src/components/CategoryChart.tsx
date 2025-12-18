@@ -1,48 +1,47 @@
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from "recharts";
-import type { Transaction } from "../data/mockData";
+import type { Transaction } from "../types/transaction";
 
-interface CategoryChartProps {
-    transactions: Transaction[];
-}
+const COLORS = ['#6366f1', '#10b981', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#06b6d4'];
 
-const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d", "#ffc658", "#ff7300"];
+export function CategoryChart({ transactions }: { transactions: Transaction[] }) {
+    // Extract unique categories from transactions
+    const categories = Array.from(new Set(transactions.map(t => t.category)));
 
-export function CategoryChart({ transactions }: CategoryChartProps) {
-    const expenseTransactions = transactions.filter((t) => t.type === "DEBIT");
-
-    const data = expenseTransactions.reduce((acc, curr) => {
-        const existing = acc.find((item) => item.name === curr.category);
-        if (existing) {
-            existing.value += curr.amount;
-        } else {
-            acc.push({ name: curr.category, value: curr.amount });
-        }
-        return acc;
-    }, [] as { name: string; value: number }[]);
+    const data = categories.map(cat => ({
+        name: cat,
+        value: transactions
+            .filter(t => t.category === cat && t.type === 'DEBIT')
+            .reduce((acc, curr) => acc + curr.amount, 0)
+    })).filter(d => d.value > 0);
 
     return (
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 h-[400px]">
-            <h3 className="text-lg font-semibold text-gray-800 mb-4">Expenses by Category</h3>
-            <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                    <Pie
-                        data={data}
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        fill="#8884d8"
-                        paddingAngle={5}
-                        dataKey="value"
-                    >
-                        {data.map((_, index) => (
-                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                    </Pie>
-                    <Tooltip formatter={(value: number | undefined) => `₹${(value || 0).toLocaleString()}`} />
-                    <Legend />
-                </PieChart>
-            </ResponsiveContainer>
+        <div className="w-full h-[300px] flex items-center justify-center">
+            {data.length > 0 ? (
+                <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                        <Pie
+                            data={data}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={60}
+                            outerRadius={100}
+                            fill="#8884d8"
+                            paddingAngle={5}
+                            dataKey="value"
+                        >
+                            {data.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} stroke="transparent" />
+                            ))}
+                        </Pie>
+                        <Tooltip
+                            contentStyle={{ borderRadius: '12px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
+                            itemStyle={{ color: '#1e293b', fontWeight: 600 }}
+                        />
+                    </PieChart>
+                </ResponsiveContainer>
+            ) : (
+                <div className="text-slate-400 text-sm italic">No expense data available</div>
+            )}
         </div>
     );
 }

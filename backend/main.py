@@ -14,7 +14,7 @@ app = FastAPI(title="SpendSense AI API")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -63,7 +63,8 @@ def parse_csv(file_path):
         df = pd.read_csv(file_path)
         # Basic normalization - simplistic assumption of column names
         # In a real app, we'd need smarter column mapping
-        df.columns = [c.lower() for c in df.columns]
+        df.columns = [c.lower().strip() for c in df.columns]
+        print(f"DEBUG: Found CSV columns: {df.columns.tolist()}")
         
         # Map common names to our schema
         rename_map = {
@@ -90,9 +91,16 @@ def parse_csv(file_path):
 
         if 'category' not in df.columns:
             df['category'] = 'Uncategorized'
+
+        # Clean amount if it's string
+        if df['amount'].dtype == 'object':
+             df['amount'] = df['amount'].astype(str).str.replace(r'[$,]', '', regex=True)
+             df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
             
-        return df[['date', 'description', 'amount', 'category']]
+        return df[['date', 'description', 'amount', 'category']].dropna(subset=['amount', 'date'])
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         print(f"CSV Parse Error: {e}")
         return pd.DataFrame()
 
@@ -187,6 +195,8 @@ async def upload_file(file: UploadFile = File(...)):
             return {"status": "warning", "message": "File uploaded but no transactions found"}
 
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/transactions")
