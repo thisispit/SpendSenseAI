@@ -15,3 +15,29 @@ export async function uploadFile(file: File) {
 
     return response.json();
 }
+
+export async function getTransactions() {
+    const response = await fetch(`${API_URL}/transactions`);
+    if (!response.ok) {
+        throw new Error("Failed to fetch transactions");
+    }
+    return response.json();
+}
+
+export async function getFiles() {
+    const response = await fetch(`${API_URL}/files`);
+    if (!response.ok) {
+        throw new Error("Failed to fetch files");
+    }
+    return response.json();
+}
+
+export async function deleteFile(filename: string) {
+    const response = await fetch(`${API_URL}/files/${filename}`, {
+        method: "DELETE",
+    });
+    if (!response.ok) {
+        throw new Error("Failed to delete file");
+    }
+    return response.json();
+}
