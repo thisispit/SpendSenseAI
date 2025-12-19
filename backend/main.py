@@ -1,4 +1,3 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import shutil
 import os
@@ -8,6 +7,7 @@ import pdfplumber
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
+from services.categorization import categorizer
 
 app = FastAPI(title="SpendSense AI API")
 
@@ -92,10 +92,14 @@ def parse_csv(file_path):
         if 'category' not in df.columns:
             df['category'] = 'Uncategorized'
 
-        # Clean amount if it's string
-        if df['amount'].dtype == 'object':
-             df['amount'] = df['amount'].astype(str).str.replace(r'[$,]', '', regex=True)
-             df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+        df['amount'] = df['amount'].astype(str).str.replace(r'[$,]', '', regex=True)
+        df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
+        
+        # KEYWORD AI: Predict category if missing/uncategorized
+        df['category'] = df.apply(
+            lambda row: categorizer.predict(row['description']) if (pd.isna(row.get('category')) or row.get('category') == 'Uncategorized') else row['category'], 
+            axis=1
+        )
             
         return df[['date', 'description', 'amount', 'category']].dropna(subset=['amount', 'date'])
     except Exception as e:
@@ -110,16 +114,61 @@ def parse_pdf(file_path):
     try:
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
+                # Strategy 1: Default (Lines)
                 table = page.extract_table()
+                
+                # Strategy 2: Text-based (Whitespace)
+                if not table:
+                    print(f"DEBUG: Default extraction failed. Trying text strategy...")
+                    table = page.extract_table({
+                        "vertical_strategy": "text", 
+                        "horizontal_strategy": "text",
+                        "snap_tolerance": 3,
+                    })
+                
                 if table:
-                    # Assume first row is header
-                    headers = [h.lower() if h else f"col_{i}" for i, h in enumerate(table[0])]
-                    for row in table[1:]:
-                        if len(row) == len(headers):
-                            transactions.append(dict(zip(headers, row)))
+                    print(f"DEBUG: PDF Page {page.page_number} extracted table with {len(table)} rows")
+                    
+                    # Search for header row
+                    header_row_idx = -1
+                    for i, row in enumerate(table[:5]): # Check first 5 rows
+                        # Clean row for check
+                        row_str = [str(cell).lower().strip() for cell in row if cell]
+                        if any('date' in c for c in row_str) and any('amount' in c for c in row_str):
+                            header_row_idx = i
+                            break
+                    
+                    if header_row_idx == -1:
+                        print("DEBUG: Could not find header row (Date/Amount) in first 5 rows")
+                        if len(table) > 0:
+                             # Fallback: Use first row if it looks reasonable
+                             header_row_idx = 0
+                    
+                    if header_row_idx != -1:
+                        raw_headers = table[header_row_idx]
+                        print(f"DEBUG: Using header row {header_row_idx}: {raw_headers}")
+                        headers = [str(h).lower().strip() if h else f"col_{i}" for i, h in enumerate(raw_headers)]
+                        
+                        for row in table[header_row_idx + 1:]:
+                            # Skip empty rows or rows with completely different length
+                            # Relax length check: match if at least 3 cols match (date/desc/amount)
+                            # But for now, let's just zip what we can
+                            clean_row = [cell if cell else "" for cell in row]
+                            # Pad row if shorter
+                            if len(clean_row) < len(headers):
+                                clean_row += [""] * (len(headers) - len(clean_row))
+                            
+                            # Truncate if longer
+                            clean_row = clean_row[:len(headers)]
+                            
+                            transactions.append(dict(zip(headers, clean_row)))
         
+        print(f"DEBUG: Extracted {len(transactions)} raw rows from PDF")
         df = pd.DataFrame(transactions)
         
+        if not df.empty:
+             print(f"DEBUG: PDF Columns: {df.columns.tolist()}")
+
         # Similar normalization as CSV
         rename_map = {
             'date': 'date',
@@ -139,7 +188,19 @@ def parse_pdf(file_path):
         if 'category' not in df.columns:
             df['category'] = 'Uncategorized'
             
+        # KEYWORD AI: Predict category if missing/uncategorized
+        df['category'] = df.apply(
+            lambda row: categorizer.predict(row['description']) if (pd.isna(row.get('category')) or row.get('category') == 'Uncategorized') else row['category'], 
+            axis=1
+        )
+            
         required = ['date', 'description', 'amount']
+        
+        # Check if columns exist
+        missing = [col for col in required if col not in df.columns]
+        if missing:
+             print(f"DEBUG: PDF Missing required columns: {missing}")
+
         # Filter valid rows
         if all(col in df.columns for col in required):
             return df[required + ['category']].dropna(subset=['amount'])
@@ -147,7 +208,8 @@ def parse_pdf(file_path):
         return pd.DataFrame() # Fallback empty
         
     except Exception as e:
-        print(f"PDF Parse Error: {e}")
+        import traceback
+        traceback.print_exc()
         return pd.DataFrame()
 
 @app.get("/")
