@@ -7,9 +7,13 @@ import pdfplumber
 from datetime import datetime
 from typing import List, Optional
 from pydantic import BaseModel
-from services.categorization import categorizer
+from fastapi import FastAPI, File, UploadFile, HTTPException, Form
+from services.categorization import Categorizer
 
 app = FastAPI(title="SpendSense AI API")
+
+# Initialize AI Service
+categorizer = Categorizer()
 
 # Configure CORS
 app.add_middleware(
@@ -109,47 +113,169 @@ def parse_csv(file_path):
         return pd.DataFrame()
 
 # Helper: Parse PDF
-def parse_pdf(file_path):
+def parse_pdf(file_path, password=None):
     transactions = []
     try:
-        with pdfplumber.open(file_path) as pdf:
+        # Handling the Password
+        # pdfplumber passes kwargs to pdfminer.pdfdocument.PDFDocument
+        # We try to open. If it raises error about password, we catch it.
+        try:
+            pdf = pdfplumber.open(file_path, password=password or "")
+        except Exception as e:
+            # pdfminer usually raises PDFPasswordIncorrect or similar.
+            # We check the message since importing the exact exception can be brittle.
+            err_msg = str(e).lower()
+            if "password" in err_msg or "initialized" in err_msg: # 'PDFPasswordIncorrect' or 'not initialized'
+                 raise ValueError("PASSWORD_REQUIRED")
+            raise e
+
+        with pdf:
             for page in pdf.pages:
-                # Strategy 1: Default (Lines)
-                table = page.extract_table()
-                
-                # Strategy 2: Text-based (Whitespace)
-                if not table:
-                    print(f"DEBUG: Default extraction failed. Trying text strategy...")
-                    table = page.extract_table({
-                        "vertical_strategy": "text", 
-                        "horizontal_strategy": "text",
-                        "snap_tolerance": 3,
-                    })
-                
-                if table:
-                    print(f"DEBUG: PDF Page {page.page_number} extracted table with {len(table)} rows")
+                # Helper to check if a row looks like data (SBI format)
+                def is_data_row(row):
+                    # SBI: 7 cols. Date, ValDate, Desc, Ref, Debit, Credit, Bal
+                    if len(row) < 5: return False
                     
-                    # Search for header row
-                    header_row_idx = -1
-                    for i, row in enumerate(table[:5]): # Check first 5 rows
-                        # Clean row for check
-                        row_str = [str(cell).lower().strip() for cell in row if cell]
-                        if any('date' in c for c in row_str) and any('amount' in c for c in row_str):
-                            header_row_idx = i
+                    # Check Date (Col 0)
+                    date_str = str(row[0]).strip()
+                    # Simple Regex for DD-Mon-YYYY or DD/MM/YYYY
+                    import re
+                    if not re.search(r'\d{1,2}[-\s/][A-Za-z0-9]{3,}[-\s/]\d{2,4}', date_str):
+                        return False
+                        
+                    # Check for Number in Debit(4) or Credit(5) or Balance(-1)
+                    # We look for at least one number-like string in the last few columns
+                    found_number = False
+                    for cell in row[4:]: # Check from Col 4 onwards
+                        clean_cell = str(cell).replace(',','').strip()
+                        if re.match(r'^\d+(\.\d+)?$', clean_cell):
+                            found_number = True
                             break
                     
-                    if header_row_idx == -1:
-                        print("DEBUG: Could not find header row (Date/Amount) in first 5 rows")
-                        if len(table) > 0:
-                             # Fallback: Use first row if it looks reasonable
-                             header_row_idx = 0
+                    return found_number
+
+                # Try each strategy
+                strategies = [
+                    ("Default", {}),
+                    ("Fuzzy Lines", {"vertical_strategy": "lines", "horizontal_strategy": "lines", "snap_tolerance": 5, "join_tolerance": 5}),
+                    ("Text", {"vertical_strategy": "text", "horizontal_strategy": "text", "snap_tolerance": 3}),
+                ]
+                
+                table = None
+                header_row_idx = -1
+                found_via_heuristic = False
+
+                for name, settings in strategies:
+                    print(f"DEBUG: Trying Strategy: {name}")
+                    try:
+                        extracted = page.extract_table(settings)
+                        if not extracted: continue
+
+                        # 1. Try Header Match
+                        idx = find_header(extracted)
+                        if idx != -1:
+                             print(f"DEBUG: Header found with strategy {name} at row {idx}")
+                             table = extracted
+                             header_row_idx = idx
+                             found_via_heuristic = False
+                             break
+                        
+                        # 2. Try Heuristic Data Match (Fallback)
+                        print(f"DEBUG: Header search failed for {name}. Checking for data content match...")
+                        for i, row in enumerate(extracted[:50]):
+                             if is_data_row(row):
+                                 print(f"DEBUG: Heuristic Data Match found at row {i} with strategy {name}")
+                                 table = extracted
+                                 header_row_idx = i - 1 # Assume header is row before, or just start data here
+                                 found_via_heuristic = True
+                                 # Force standard SBI headers
+                                 # We need to inject a header row if we are starting at data
+                                 break
+                        
+                        if found_via_heuristic:
+                            break
+                            
+                    except Exception as e:
+                         print(f"DEBUG: Strategy {name} failed: {e}")
+                
+                # ... (strategies loop end)
+                
+                # FINAL FALLBACK: Simple Text Line Parsing
+                # If table extraction failed for THIS page, try reading text line by line.
+                # This runs PER PAGE, not just once globally.
+                if not table: # Try fallback if no table found on this specific page
+                    print(f"DEBUG: Table extraction failed on this page. Attempting raw text parsing...")
+                    text = page.extract_text()
+                    if text:
+                        lines = text.split('\n')
+                        import re
+                        for line_num, line in enumerate(lines):
+                            # Skip empty or very short lines
+                            if not line or len(line.strip()) < 10:
+                                continue
+                            
+                            # Match date patterns (DD-Mon-YYYY, DD/MM/YYYY, DD-MM-YYYY)
+                            date_match = re.search(r'(\d{1,2}[-\s/][A-Za-z]{3}[-\s/]\d{2,4})', line)
+                            if not date_match:
+                                # Try numeric date format DD/MM/YYYY or DD-MM-YYYY
+                                date_match = re.search(r'(\d{1,2}[-/]\d{1,2}[-/]\d{2,4})', line)
+                            
+                            # Match amounts - look for numbers with optional decimals and commas
+                            amount_matches = list(re.finditer(r'(-?[\d,]+\.?\d*)', line))
+                            # Filter to keep only valid amounts
+                            amount_matches = [m for m in amount_matches if '.' in m.group() or len(m.group().replace(',','')) > 1]
+                            
+                            if date_match and amount_matches:
+                                date_val = date_match.group(1).strip()
+                                # Take the last number as amount
+                                amount_val = amount_matches[-1].group(1).replace(',', '').strip()
+                                
+                                # Description is everything between date and amount
+                                start_desc = date_match.end()
+                                end_desc = amount_matches[-1].start()
+                                desc_val = line[start_desc:end_desc].strip()
+                                
+                                # Only add if we have a meaningful description
+                                if desc_val and len(desc_val) > 2:
+                                    print(f"DEBUG: Text Fallback Line {line_num}: {date_val} | {desc_val} | {amount_val}")
+                                    transactions.append({
+                                        'date': date_val,
+                                        'description': desc_val,
+                                        'amount': amount_val,
+                                        'category': 'Uncategorized'
+                                    })
+
+                if table:
+                    # If we found via heuristic, we might not have the header row index pointing to a header.
+                    # It points to the pre-data row.
                     
-                    if header_row_idx != -1:
+                    raw_headers = []
+                    if found_via_heuristic:
+                         print("DEBUG: Using Hardcoded SBI Headers due to Heuristic Match")
+                         # SBI Standard Map
+                         # Note: `zip` will cut off extra columns if we provide fewer headers, 
+                         # or drop data if we provide too many. 
+                         # We try to align with the detected table width.
+                         if len(table[0]) >= 7:
+                             headers = ['date', 'value_date', 'description', 'ref', 'debit', 'credit', 'balance']
+                         else:
+                             headers = ['date', 'description', 'ref', 'debit', 'credit', 'balance'] # Fallback
+                         
+                         # Since header_row_idx points to the row *before* data (or arbitrary),
+                         # we process rows starting from header_row_idx + 1.
+                         # If header_row_idx was set to i matching data, we should treat i as data.
+                         # Let's adjust: if found_via_heuristic, header_row_idx is the *first data row index*.
+                         pass 
+                    elif header_row_idx != -1:
                         raw_headers = table[header_row_idx]
                         print(f"DEBUG: Using header row {header_row_idx}: {raw_headers}")
                         headers = [str(h).lower().strip() if h else f"col_{i}" for i, h in enumerate(raw_headers)]
+                    else:
+                        continue # Skip page if no header and no heuristic found
                         
-                        for row in table[header_row_idx + 1:]:
+                    start_row = header_row_idx if found_via_heuristic else header_row_idx + 1
+                    
+                    for row in table[start_row:]:
                             # Skip empty rows or rows with completely different length
                             # Relax length check: match if at least 3 cols match (date/desc/amount)
                             # But for now, let's just zip what we can
@@ -169,22 +295,84 @@ def parse_pdf(file_path):
         if not df.empty:
              print(f"DEBUG: PDF Columns: {df.columns.tolist()}")
 
-        # Similar normalization as CSV
+        # Normalize Columns
         rename_map = {
             'date': 'date',
+            'txn date': 'date',
             'transaction date': 'date',
             'description': 'description',
             'details': 'description',
+            'narration': 'description',
+            'particulars': 'description',
+            'ref no': 'description',
+            'cheque': 'description',
+            'reference': 'description',
             'amount': 'amount',
+            'debit': 'debit',
+            'credit': 'credit',
+            'dr': 'debit',
+            'cr': 'credit',
+            'withdrawal': 'debit',
+            'deposit': 'credit',
             'category': 'category'
         }
-        df = df.rename(columns=rename_map)
-         
+        
+        # Fuzzy match rename
+        new_cols = {}
+        for col in df.columns:
+            for key in rename_map:
+                if key in col:
+                    new_cols[col] = rename_map[key]
+                    break
+        df = df.rename(columns=new_cols)
+        
+        # Calculate Amount from Debit/Credit if missing
+        if 'amount' not in df.columns:
+             # Try stricter Debit/Credit matching first
+             if 'debit' in df.columns and 'credit' in df.columns:
+                 print("DEBUG: Calculating amount from Debit/Credit columns")
+                 # Clean and convert both columns
+                 df['debit'] = df['debit'].astype(str).str.replace(r'[$,]', '', regex=True)
+                 df['debit'] = pd.to_numeric(df['debit'], errors='coerce').fillna(0)
+                 df['credit'] = df['credit'].astype(str).str.replace(r'[$,]', '', regex=True)
+                 df['credit'] = pd.to_numeric(df['credit'], errors='coerce').fillna(0)
+                 
+                 # For each row: if debit has value, amount is -debit; if credit has value, amount is +credit
+                 # This properly handles cases where one column is empty
+                 df['amount'] = df.apply(lambda row: 
+                     -row['debit'] if row['debit'] != 0 else row['credit'], 
+                     axis=1)
+                 
+                 print(f"DEBUG: Sample amounts - Debits: {df[df['debit'] > 0]['amount'].head().tolist()}, Credits: {df[df['credit'] > 0]['amount'].head().tolist()}")
+                 
+             # Fallback: if only one exists (e.g. only withdrawals on page)
+             elif 'debit' in df.columns:
+                 print("DEBUG: Calculating amount from Debit only")
+                 df['debit'] = df['debit'].astype(str).str.replace(r'[$,]', '', regex=True)
+                 df['debit'] = pd.to_numeric(df['debit'], errors='coerce').fillna(0)
+                 df['amount'] = -df['debit']
+             elif 'credit' in df.columns:
+                 print("DEBUG: Calculating amount from Credit only")
+                 df['credit'] = df['credit'].astype(str).str.replace(r'[$,]', '', regex=True)
+                 df['credit'] = pd.to_numeric(df['credit'], errors='coerce').fillna(0)
+                 df['amount'] = df['credit']
+
         # Clean amount (remove currency symbols)
-        if 'amount' in df.columns:
+        if 'amount' in df.columns and df['amount'].dtype == 'object':
             df['amount'] = df['amount'].astype(str).str.replace(r'[$,]', '', regex=True)
             df['amount'] = pd.to_numeric(df['amount'], errors='coerce')
-            
+        
+        # Drop rows with invalid amount
+        if 'amount' in df.columns:
+             df = df.dropna(subset=['amount'])
+
+        # Fix Dates
+        if 'date' in df.columns:
+             # Attempt to parse common bank formats
+             df['date'] = pd.to_datetime(df['date'], dayfirst=True, errors='coerce')
+             df = df.dropna(subset=['date'])
+             df['date'] = df['date'].dt.strftime('%Y-%m-%d')
+
         if 'category' not in df.columns:
             df['category'] = 'Uncategorized'
             
@@ -208,6 +396,11 @@ def parse_pdf(file_path):
         return pd.DataFrame() # Fallback empty
         
     except Exception as e:
+        # Check if it was a password error raised during processing
+        err_msg = repr(e).lower()
+        if "password" in err_msg or "initialized" in err_msg:
+             raise ValueError("PASSWORD_REQUIRED")
+        
         import traceback
         traceback.print_exc()
         return pd.DataFrame()
@@ -217,7 +410,7 @@ def read_root():
     return {"message": "SpendSense AI Backend is running"}
 
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
+async def upload_file(file: UploadFile = File(...), password: Optional[str] = Form(None)):
     try:
         file_location = os.path.join(UPLOAD_DIR, file.filename)
         with open(file_location, "wb") as buffer:
@@ -228,7 +421,12 @@ async def upload_file(file: UploadFile = File(...)):
         if file.filename.endswith('.csv'):
             df = parse_csv(file_location)
         elif file.filename.endswith('.pdf'):
-            df = parse_pdf(file_location)
+            try:
+                df = parse_pdf(file_location, password=password)
+            except ValueError as e:
+                if str(e) == "PASSWORD_REQUIRED":
+                     return {"status": "error", "code": "PASSWORD_REQUIRED", "message": "This PDF is password protected."}
+                raise e
         else:
              return {"status": "error", "message": "Unsupported file format"}
              

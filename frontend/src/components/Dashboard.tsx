@@ -3,7 +3,7 @@ import { SummaryCard } from "./SummaryCard";
 import { CategoryChart } from "./CategoryChart";
 import { TrendChart } from "./TrendChart";
 import { TransactionTable } from "./TransactionTable";
-import { Upload, Loader2, CheckCircle, AlertCircle, Trash2, FileText } from "lucide-react";
+import { Upload, Loader2, CheckCircle, AlertCircle, Trash2, FileText, Lock, X } from "lucide-react";
 import { uploadFile, getTransactions, getFiles, deleteFile } from "../lib/api";
 import type { Transaction } from "../types/transaction";
 import axios from 'axios';
@@ -21,6 +21,12 @@ export function Dashboard() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
   const [files, setFiles] = useState<UploadedFile[]>([]);
   const [loading, setLoading] = useState(true);
+
+  // Password Support
+  const [showPasswordModal, setShowPasswordModal] = useState(false);
+  const [pdfPassword, setPdfPassword] = useState("");
+  const [pendingFile, setPendingFile] = useState<File | null>(null);
+  const [passwordError, setPasswordError] = useState(false);
 
   const fetchData = async () => {
     try {
@@ -91,31 +97,57 @@ export function Dashboard() {
     }
   }
 
-  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
+  const processUpload = async (file: File, password?: string) => {
     setIsUploading(true);
     setUploadStatus("idle");
     setStatusMessage("");
+    setPasswordError(false);
 
     try {
-      const response = await uploadFile(file);
+      const response = await uploadFile(file, password);
+
+      if (response.code === "PASSWORD_REQUIRED") {
+        setPendingFile(file);
+        setShowPasswordModal(true);
+        if (password) setPasswordError(true); // Retry failed
+        setIsUploading(false);
+        return;
+      }
+
       setUploadStatus(response.status === 'success' ? 'success' : 'warning');
       setStatusMessage(response.message || "Upload complete");
 
-      fetchData();
-      setTimeout(() => setUploadStatus("idle"), 5000);
+      if (response.status === 'success' || response.status === 'warning') {
+        setShowPasswordModal(false);
+        setPdfPassword("");
+        setPendingFile(null);
+        fetchData();
+        setTimeout(() => setUploadStatus("idle"), 5000);
+      }
+
     } catch (error) {
       console.error("Upload failed:", error);
       setUploadStatus("error");
       setStatusMessage(`Upload failed: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
-      setIsUploading(false);
+      if (!showPasswordModal) setIsUploading(false); // correctly manage loading state
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
     }
+  };
+
+  const handlePasswordSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pendingFile) {
+      processUpload(pendingFile, pdfPassword);
+    }
+  };
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    processUpload(file);
   };
 
   return (
@@ -267,6 +299,57 @@ export function Dashboard() {
           </>
         )}
       </main>
+
+      {/* Password Modal */}
+      {showPasswordModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+          <div className="glass-panel p-6 rounded-2xl w-full max-w-sm shadow-2xl animate-in fade-in zoom-in-95">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-slate-900 flex items-center gap-2">
+                <Lock className="w-5 h-5 text-indigo-600" /> Protected PDF
+              </h3>
+              <button
+                onClick={() => { setShowPasswordModal(false); setPendingFile(null); }}
+                className="text-slate-400 hover:text-slate-600"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <p className="text-slate-600 mb-4 text-sm">
+              This file is password protected. Please enter the password to unlock and process it.
+            </p>
+            <form onSubmit={handlePasswordSubmit}>
+              <div className="mb-4">
+                <input
+                  type="password"
+                  value={pdfPassword}
+                  onChange={(e) => setPdfPassword(e.target.value)}
+                  className={`w-full px-4 py-2 rounded-xl border ${passwordError ? 'border-rose-500 bg-rose-50' : 'border-slate-200 bg-white/50'} focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all`}
+                  placeholder="File Password"
+                  autoFocus
+                />
+                {passwordError && <p className="text-rose-600 text-xs mt-1">Incorrect password, please try again.</p>}
+              </div>
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setShowPasswordModal(false); setPendingFile(null); }}
+                  className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-xl transition-colors font-medium text-sm"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!pdfPassword}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2 rounded-xl font-medium text-sm transition-all shadow-lg shadow-indigo-200"
+                >
+                  {isUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Unlock & Upload"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
