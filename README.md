@@ -218,17 +218,12 @@ DELETE /api/files/{filename}    Delete specific file
 4. Push (`git push origin feature/AmazingFeature`)
 5. Open Pull Request
 
----
-
-## 📄 License
-
-MIT License — See [LICENSE](LICENSE) file
 
 ---
 
 ## 👤 Author
 
-**Pitam Sarkar** ([@thisispit](https://github.com/thisispit))
+**Pit** ([@thisispit](https://github.com/thisispit))
 
 ---
 
