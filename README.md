@@ -42,7 +42,6 @@ cd SpendSenseAI
 ```
 
 ---
-
 ### Step 2: Backend Setup & Installation
 
 ```bash
