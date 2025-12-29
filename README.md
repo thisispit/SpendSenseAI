@@ -199,13 +199,6 @@ DELETE /api/files/{filename}    Delete specific file
 - Dashboard with charts & filters
 - Duplicate prevention
 
-**Coming Soon 🚧**
-- Manual recategorization
-- Budget tracking & alerts
-- Multi-currency support
-- Dark mode
-- Mobile app
-- Advanced ML models
 
 ---
 
