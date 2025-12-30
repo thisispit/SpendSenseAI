@@ -223,6 +223,4 @@ DELETE /api/files/{filename}    Delete specific file
 
 **Built with ❤️ using React, FastAPI, and AI**
 
-⭐ Star this repo if you find it helpful!
-
 </div>
